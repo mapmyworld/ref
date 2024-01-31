@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Get features under the mouse pointer</title>
+    <meta
+      name="viewport"
+      content="initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.0.0/mapbox-gl.js"></script>
+	
+    <script src='https://unpkg.com/@turf/turf/turf.min.js'></script>
+    <!-- <script src="https://api.tiles.mapbox.com/mapbox.js/plugins/turf/v3.0.11/turf.min.js"></script> -->
+    
+	<script src="https://unpkg.com/h3-js@3"></script>
+	
+    <link
+      href="https://api.mapbox.com/mapbox-gl-js/v2.0.0/mapbox-gl.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      #map {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <style>
+      #features {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 50%;
+        overflow: auto;
+        background: rgba(255, 255, 255, 0.8);
+      }
+      #map canvas {
+        cursor: crosshair;
+      }
+    </style>
+    <div id="map"></div>
+    <pre id="features"></pre>
+    <script>
+      mapboxgl.accessToken =
+        "pk.eyJ1IjoibGV0b3VycG93ZXJzY29tYmluZSIsImEiOiJja2o4c2thNW01ZXpmMnRscnY3b2JiMnhvIn0.FaiRnkdj3L6gROrzxkzi_A";
+      var map = new mapboxgl.Map({
+        container: "map",
+        style: "mapbox://styles/mapbox/streets-v11",
+        center: [-76.93630345229688, 38.90583496266345], // starting position
+        zoom: 15 // starting zoom
+      });
+
+      map.on("load", function () {
+        var collector = [];
+
+       // Add initial data for hexagons & points
+       const [hexFeatures, pointFeatures] = [[],[]]; //getFeatures(map.getBounds());
+       map.addSource("geojson", {
+         type: "geojson",
+         data: hexFeatures
+       });
+       map.addSource("label", {
+         type: "geojson",
+         data: pointFeatures
+       });
+      
+       // Add hexagon layer (outline of h3 hexagon)
+       map.addLayer({
+       "id": "geojsonLayer",
+       "type": "line",
+       "source": "geojson",
+       "layout": {},
+       "paint": {
+         "line-width": 1,
+         "line-color": "#00a0ff",
+         "line-opacity": 0.8
+       }
+       });
+      
+       // Add text label layer (text of h3 index)
+       map.addLayer({
+       "id": "points",
+       "type": "symbol",
+       "source": "label",
+       "layout": {
+         "text-field": "{hex}",
+         "text-size": 12,
+         "text-anchor": "center"
+       },
+       "paint": {
+         "text-color": "#00a0ff"
+       }
+       });
+
+        map.addSource("buildings", {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: collector
+          }
+        });
+
+        map.addLayer(
+          {
+            id: "building-highlighted",
+            type: "fill",
+            source: "buildings",
+            layout: {
+              // make layer visible by default
+              visibility: "visible"
+            },
+            paint: {
+              "fill-color": "yellow",
+              "fill-opacity": 1,
+              "fill-outline-color": "black"
+            }
+            // filter: ["in", "id", ""],
+            // "source-layer": "building"
+          },
+          "settlement-label"
+        );
+      });
+
+      map.on("click", function (e) {
+
+        // Convert a lat/lng point to a hexagon index at resolution 10
+        const h3Index = h3.geoToH3(e.lngLat.lng, e.lngLat.lat, 10);
+
+        // Get the center of the hexagon
+        const hexCenterCoordinates = h3.h3ToGeo(h3Index);
+
+        // Get the vertices of the hexagon
+        const hexBoundary = h3.h3ToGeoBoundary(h3Index);
+
+        hexBoundary.push(hexBoundary[0]);
+
+        console.log(h3Index);
+        console.log(hexCenterCoordinates);
+        console.log(hexBoundary);
+
+
+        const hexPolygon = {
+          type: 'Feature',
+          properties: {
+            paint: {
+              "line-color": "red"
+            }
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [hexBoundary]
+          }
+        };
+
+
+        var features = map.querySourceFeatures("composite", {
+          sourceLayer: "building"
+        });
+
+        console.log("features:");
+        console.log(features);
+
+        const collector = [];
+
+        console.log('hexPolygon:');
+        console.log(hexPolygon);
+
+        for (let i = 0; i < features.length; i++) {
+
+          const feature = features[i]
+
+          if (feature.geometry.type==="Polygon" && turf.booleanWithin(feature, hexPolygon)) {
+            collector.push(features[i]);
+          }
+        }
+
+        console.log("collector:");
+        console.log(collector);
+
+        const buildingsHighlightedLayer = map.getSource("buildings");
+        buildingsHighlightedLayer.setData({ type: "FeatureCollection", features: collector });
+      });
+
+      map.on("mousemove", function (e) {
+        var features = map.queryRenderedFeatures(e.point);
+
+        // Limit the number of properties we're displaying for
+        // legibility and performance
+        var displayProperties = [
+          "type",
+          "properties",
+          "id",
+          "layer",
+          "source",
+          "sourceLayer",
+          "state",
+          "subdivision"
+        ];
+
+        var displayFeatures = features.map(function (feat) {
+          var displayFeat = {};
+          displayProperties.forEach(function (prop) {
+            displayFeat[prop] = feat[prop];
+          });
+          return displayFeat;
+        });
+
+        document.getElementById("features").innerHTML = JSON.stringify(
+          displayFeatures,
+          null,
+          2
+        );
+      });
+    </script>
+  </body>
+</html>
